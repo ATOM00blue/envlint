@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+- Redact possibly-secret values everywhere they were previously echoed. Schema
+  type errors (`V003`) and disallowed-enum errors (`V004`) now show a redacted,
+  length-bounded preview instead of the raw value; the malformed-line lint hint
+  (`E001`) is likewise redacted. Output (text and JSON) no longer leaks secrets.
+- `envlint example` now redacts short, high-entropy values too (previously any
+  value ≤ 24 chars on a key whose name didn't look secret was copied verbatim
+  into the generated `.env.example`). The generator now uses the same entropy
+  heuristic as the scanner.
+- Cap the size of env/schema files read into memory (default 8 MiB) to prevent a
+  memory/CPU denial-of-service from an accidental or hostile huge file.
+
+### Fixed
+- Non-UTF-8 (e.g. Latin-1) `.env` files no longer crash with an unhandled
+  `UnicodeDecodeError`; they are decoded leniently and inspected safely. Size /
+  read errors now produce a clean usage exit code (`2`) instead of a traceback.
+- Schema files whose root is not a table/object are rejected with a clear error.
+
+### Added
+- `redact()` and `looks_high_entropy()` helpers in `envlint.secrets`, and
+  `read_text_capped()` / `MAX_FILE_BYTES` / `EnvFileTooLargeError` in
+  `envlint.parser`.
+- Regression tests: per-detector ReDoS timing bounds, redaction guarantees for
+  every output path, non-UTF-8 handling, and the file-size cap.
+
 ## [0.1.0] - 2026-05-22
 
 ### Added

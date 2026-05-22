@@ -141,6 +141,15 @@ Fix: added regression tests — a timing bound for every detector pattern agains
 and redaction assertions for the example generator, V003/V004 messages, E001, and the size cap.
 **Fixed.**
 
+### 10. Info — Path handling
+Files: `src/envlint/parser.py`, `src/envlint/schema.py:59-67` (`find_schema`), `src/envlint/cli.py`
+
+Reviewed for path traversal: all read/write targets are paths the invoking user supplies directly on
+the command line, or fixed sibling filenames (`.env.schema[.toml|.json]`) located next to the env
+file. envlint is a single-user local CLI with no server/multi-tenant boundary, so a user choosing to
+read/write a path they already control is not a privilege boundary crossing. Output writes are gated
+by `--force`. No traversal mitigation is required; **no change.**
+
 ### 9. Info — `diff --values` prints values by design
 File: `src/envlint/cli.py:283-310`
 
@@ -152,11 +161,12 @@ text already warns "may reveal secrets". This is intended, opt-in behavior and i
 ## Verification (post-fix)
 
 - `ruff check .` — clean.
-- `pytest` — all tests green (including new regression tests).
-- `bandit -r src` — no issues.
-- `pip-audit` — clean after the setuptools upgrade in the dev venv.
-- End-to-end smoke on fixtures: `check` (text + json), `example`, `schema`, `diff` — secrets redacted
-  in every output path; exit codes correct (0 clean / 1 problems / 2 usage).
+- `pytest` — 140 passed (108 original + 32 new regression tests).
+- `bandit -r src` — "No issues identified."
+- `pip-audit` — "No known vulnerabilities found" after the setuptools upgrade in the dev venv.
+- End-to-end smoke on fixtures + a synthetic secrets file: `check` (text + json), `example`,
+  `schema`, `diff` — no raw secret appeared in any output path; exit codes correct
+  (0 clean / 1 problems / 2 usage).
 
 ## Intentionally not changed
 
