@@ -12,6 +12,24 @@ from .secrets import is_secret_key, looks_high_entropy, match_known_patterns
 _SAFE_HINT_MAX_LEN = 24
 
 
+def _redacted_placeholder(key: str) -> str:
+    return f"your-{key.lower().replace('_', '-')}-here"
+
+
+def _is_leaky_value(value: str) -> bool:
+    """Whether copying ``value`` verbatim into a committed file would leak.
+
+    True if the value matches a known provider secret pattern or looks
+    high-entropy (the same signals the scanner treats as a credential). This is
+    independent of the key name / schema ``secret`` flag, so it can backstop a
+    user who declares ``secret = false`` on a key that nonetheless holds a real
+    credential — exactly the case the scanner reports as an error.
+    """
+    if value == "":
+        return False
+    return match_known_patterns(value) is not None or looks_high_entropy(value)
+
+
 def _placeholder_for(key: str, value: str) -> str:
     """Produce a safe placeholder for a value, redacting likely secrets.
 
@@ -22,10 +40,8 @@ def _placeholder_for(key: str, value: str) -> str:
     """
     if value == "":
         return ""
-    redacted = f"your-{key.lower().replace('_', '-')}-here"
-    if is_secret_key(key) or match_known_patterns(value) is not None:
-        return redacted
-    if looks_high_entropy(value):
+    redacted = _redacted_placeholder(key)
+    if is_secret_key(key) or _is_leaky_value(value):
         return redacted
     # Numeric-looking values are safe to keep as a hint.
     if value.isdigit():
