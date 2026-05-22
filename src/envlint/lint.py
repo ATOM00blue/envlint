@@ -6,6 +6,7 @@ import re
 
 from .parser import ParsedEnv
 from .report import Finding, Severity
+from .secrets import redact
 
 # Valid POSIX-ish env var name.
 _VALID_KEY = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -16,6 +17,7 @@ def lint(env: ParsedEnv) -> list[Finding]:
     findings: list[Finding] = []
 
     # E001: malformed lines (look like assignments but have no '=' / empty key).
+    # The raw line may contain a secret, so it is redacted before being echoed.
     for line_no, raw in env.malformed:
         findings.append(
             Finding(
@@ -24,7 +26,7 @@ def lint(env: ParsedEnv) -> list[Finding]:
                 severity=Severity.ERROR,
                 file=env.path,
                 line=line_no,
-                hint=f"got: {raw.strip()!r}",
+                hint=f"got: {redact(raw.strip())}",
             )
         )
 

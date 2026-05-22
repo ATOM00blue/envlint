@@ -158,3 +158,35 @@ def test_no_args_shows_help():
     result = runner.invoke(app, [])
     # no_args_is_help -> exit code 0 or 2 depending on typer, help text present
     assert "Usage" in result.stdout or "Commands" in result.stdout
+
+
+def test_check_json_output_never_leaks_secret(tmp_path):
+    """End-to-end: a secret on a type-mismatched key must not appear in output."""
+    secret = "ghp_0123456789abcdefABCDEF0123456789abcd0000"
+    env = tmp_path / ".env"
+    env.write_text(f"API_KEY={secret}\n")
+    schema = tmp_path / ".env.schema"
+    schema.write_text('[vars.API_KEY]\ntype = "int"\nsecret = true\n')
+    result = runner.invoke(app, ["check", str(env), "--format", "json"])
+    assert secret not in result.stdout
+
+
+def test_check_non_utf8_file_clean_exit(tmp_path):
+    p = tmp_path / "legacy.env"
+    p.write_bytes(b"KEY=caf\xe9\n")
+    result = runner.invoke(app, ["check", str(p), "--no-schema"])
+    # Parses cleanly (no traceback); KEY is valid -> exit 0.
+    assert result.exception is None
+    assert result.exit_code == 0
+
+
+def test_check_oversized_file_usage_error(tmp_path):
+    from envlint.parser import MAX_FILE_BYTES
+
+    p = tmp_path / "huge.env"
+    with open(p, "wb") as fh:
+        fh.write(b"A=1\n")
+        fh.seek(MAX_FILE_BYTES + 1024)
+        fh.write(b"B=2\n")
+    result = runner.invoke(app, ["check", str(p), "--no-schema"])
+    assert result.exit_code == 2

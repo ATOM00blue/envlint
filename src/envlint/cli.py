@@ -18,7 +18,7 @@ from . import __version__
 from .diff import diff_envs
 from .generate import generate_example, generate_schema
 from .lint import lint as run_lint
-from .parser import ParsedEnv, parse_file
+from .parser import EnvFileTooLargeError, ParsedEnv, parse_file
 from .report import Report, Severity
 from .schema import Schema, find_schema, load_schema
 from .schema import validate as run_validate
@@ -143,6 +143,9 @@ def _parse_or_exit(path: Path) -> ParsedEnv:
         raise typer.Exit(EXIT_USAGE)
     try:
         return parse_file(path)
+    except EnvFileTooLargeError as exc:
+        err.print(f"[bold red]error:[/] {exc}")
+        raise typer.Exit(EXIT_USAGE) from exc
     except OSError as exc:  # pragma: no cover - filesystem edge
         err.print(f"[bold red]error:[/] cannot read {path}: {exc}")
         raise typer.Exit(EXIT_USAGE) from exc

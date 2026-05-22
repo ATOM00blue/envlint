@@ -74,3 +74,21 @@ def test_generate_schema_valid_toml(good_env):
 def test_example_ends_with_newline():
     out = generate_example(parse_text("A=1"))
     assert out.endswith("\n")
+
+
+def test_example_redacts_short_high_entropy_nonsecret_key():
+    """A short high-entropy token on a non-secret-looking key must be redacted.
+
+    Regression for the leak where values <= 24 chars were copied verbatim into
+    the (committed) .env.example.
+    """
+    blob = "Zx9KqL2mNpW8vR4tY7uH3sD"  # 23 chars, high entropy, key not secret-y
+    env = parse_text(f"CONFIG_BLOB={blob}")
+    out = generate_example(env)
+    assert blob not in out
+    assert "your-config-blob-here" in out
+
+
+def test_example_keeps_lowentropy_short_value():
+    out = generate_example(parse_text("REGION=us-east-1"))
+    assert "REGION=us-east-1" in out

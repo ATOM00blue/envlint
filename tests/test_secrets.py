@@ -1,9 +1,16 @@
+import time
+
 import pytest
 
 from envlint.parser import parse_file, parse_text
 from envlint.secrets import (
+    _PATTERNS,
+    _PLACEHOLDER,
+    _SECRET_KEY_HINTS,
     is_secret_key,
+    looks_high_entropy,
     match_known_patterns,
+    redact,
     scan,
     shannon_entropy,
 )
@@ -110,3 +117,82 @@ def test_secrets_fixture(secrets_env):
     flagged_keys = {f.key for f in findings}
     assert "PLACEHOLDER_KEY" not in flagged_keys
     assert "NORMAL_VALUE" not in flagged_keys
+
+
+# --- redaction ---------------------------------------------------------------
+
+
+def test_redact_never_returns_full_value():
+    secret = FAKE_GITHUB
+    out = redact(secret)
+    assert secret not in out
+    # At most a tiny prefix is exposed.
+    assert out.count(secret[:4]) <= 1
+    assert "redacted" in out
+
+
+def test_redact_short_value_fully_masked():
+    out = redact("abc123")
+    assert "abc123" not in out
+    assert out == "<redacted 6-char value>"
+
+
+def test_redact_empty():
+    assert redact("") == "<empty>"
+
+
+def test_scan_findings_never_contain_raw_secret():
+    """No finding emitted by scan() should ever embed the raw value."""
+    env = parse_text(
+        f"AWS={FAKE_AWS}\nTOK={FAKE_STRIPE}\nGH={FAKE_GITHUB}\n"
+        "BLOB=Zx9KqL2mNpW8vR4tY7uH3sD6fG1jB5cA0eXwQ"
+    )
+    for f in scan(env):
+        blob = " ".join(filter(None, [f.message, f.hint or ""]))
+        assert FAKE_AWS not in blob
+        assert FAKE_STRIPE not in blob
+        assert FAKE_GITHUB not in blob
+        assert "Zx9KqL2mNpW8vR4tY7uH3sD6fG1jB5cA0eXwQ" not in blob
+
+
+def test_looks_high_entropy():
+    assert looks_high_entropy("Zx9KqL2mNpW8vR4tY7uH3sD6fG1jB5cA0eXwQ")
+    assert not looks_high_entropy("short")
+    assert not looks_high_entropy("your-api-key-here")
+    assert not looks_high_entropy("a value with spaces in it that is long")
+
+
+# --- ReDoS / catastrophic backtracking ---------------------------------------
+
+
+@pytest.mark.parametrize("pat", _PATTERNS, ids=[p.code for p in _PATTERNS])
+def test_detector_patterns_have_no_catastrophic_backtracking(pat):
+    """Every detector must stay linear on adversarial input.
+
+    A pattern with catastrophic backtracking would blow up super-linearly as
+    the input grows. We feed large adversarial strings (long runs of in-class
+    characters, matching prefixes with no terminator) and require each search
+    to complete well under a generous bound.
+    """
+    adversarial = [
+        "A" * 50000,
+        "0" * 50000,
+        "a0A_-" * 10000,
+        "sk_live_" + "a" * 50000 + " ",
+        "eyJ" + "A" * 50000,
+        "AKIA" + "0" * 50000,
+        "-----BEGIN " + "A" * 50000,
+    ]
+    for s in adversarial:
+        start = time.perf_counter()
+        pat.regex.search(s)
+        elapsed = time.perf_counter() - start
+        assert elapsed < 0.5, f"{pat.code} took {elapsed:.3f}s on len {len(s)}"
+
+
+@pytest.mark.parametrize("rx", [_PLACEHOLDER, _SECRET_KEY_HINTS])
+def test_helper_regexes_are_redos_safe(rx):
+    for s in ("<" + "a" * 100000, "your_" + "a" * 100000, "API_" * 25000):
+        start = time.perf_counter()
+        rx.search(s) if rx is _SECRET_KEY_HINTS else rx.match(s)
+        assert (time.perf_counter() - start) < 0.5

@@ -59,3 +59,13 @@ def test_bad_fixture_has_many_problems(bad_env):
     assert "E001" in found  # NO_DELIMITER_LINE
     assert "E003" in found  # 1INVALID
     assert "W001" in found  # lowercase_key
+
+
+def test_malformed_line_hint_redacts_value():
+    """E001 must not echo the full raw line, which may contain a secret."""
+    secret = "ghp_0123456789abcdefABCDEF0123456789abcd0000"
+    findings = lint(parse_text(f"export {secret}"))
+    e001 = [f for f in findings if f.code == "E001"]
+    assert e001
+    for f in e001:
+        assert secret not in (f.hint or "")

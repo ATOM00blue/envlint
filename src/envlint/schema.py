@@ -10,8 +10,9 @@ from pathlib import Path
 from typing import Optional, Union
 from urllib.parse import urlparse
 
-from .parser import ParsedEnv
+from .parser import ParsedEnv, read_text_capped
 from .report import Finding, Severity
+from .secrets import redact
 from .typo import closest
 
 if sys.version_info >= (3, 11):
@@ -80,10 +81,17 @@ def _coerce_bool(value: object) -> Optional[bool]:
 
 
 def load_schema(path: Union[str, Path]) -> Schema:
-    """Load a schema from a TOML or JSON file."""
+    """Load a schema from a TOML or JSON file.
+
+    Parsing is done with the stdlib JSON and TOML parsers only (no ``eval`` or
+    YAML), so a malicious schema cannot execute code. The file is read with a
+    size cap to bound resource usage.
+    """
     p = Path(path)
-    text = p.read_text(encoding="utf-8")
+    text = read_text_capped(p)
     data = json.loads(text) if p.suffix == ".json" else tomllib.loads(text)
+    if not isinstance(data, dict):
+        raise ValueError("schema root must be a table/object")
     return _build_schema(data, path=str(p))
 
 
@@ -119,42 +127,48 @@ def _build_schema(data: dict, path: str = "") -> Schema:
 
 
 def _type_error(spec: VarSpec, value: str) -> Optional[str]:
-    """Return an error message if ``value`` doesn't match ``spec.type``, else None."""
+    """Return an error message if ``value`` doesn't match ``spec.type``, else None.
+
+    Error messages must NEVER echo the raw value: the value may be a secret and
+    this string is printed to stdout / written to JSON output. We show only a
+    redacted preview via :func:`redact`.
+    """
     t = spec.type
+    safe = redact(value)
     if t == "string":
         return None
     if t == "int":
         try:
             int(value)
         except ValueError:
-            return f"expected an integer, got {value!r}"
+            return f"expected an integer, got {safe}"
         return None
     if t == "float":
         try:
             float(value)
         except ValueError:
-            return f"expected a number, got {value!r}"
+            return f"expected a number, got {safe}"
         return None
     if t == "bool":
         if value.lower() not in (_BOOL_TRUE | _BOOL_FALSE):
-            return f"expected a boolean (true/false), got {value!r}"
+            return f"expected a boolean (true/false), got {safe}"
         return None
     if t == "port":
         try:
             n = int(value)
         except ValueError:
-            return f"expected a port number, got {value!r}"
+            return f"expected a port number, got {safe}"
         if not (0 <= n <= 65535):
             return f"port {n} out of range 0-65535"
         return None
     if t == "url":
         parsed = urlparse(value)
         if not parsed.scheme or not parsed.netloc:
-            return f"expected a URL with scheme and host, got {value!r}"
+            return f"expected a URL with scheme and host, got {safe}"
         return None
     if t == "email":
         if not _EMAIL_RE.match(value):
-            return f"expected an email address, got {value!r}"
+            return f"expected an email address, got {safe}"
         return None
     return None
 
@@ -217,12 +231,12 @@ def validate(env: ParsedEnv, schema: Schema) -> list[Finding]:
                 )
             )
 
-        # Allowed values (enum).
+        # Allowed values (enum). Do not echo the actual value (may be a secret).
         if spec.allowed is not None and value not in spec.allowed:
             findings.append(
                 Finding(
                     code="V004",
-                    message=f"{name}={value!r} is not an allowed value",
+                    message=f"{name} value ({redact(value)}) is not an allowed value",
                     severity=Severity.ERROR,
                     file=env.path,
                     line=line,

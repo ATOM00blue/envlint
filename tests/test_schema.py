@@ -139,3 +139,32 @@ def test_validate_against_fixture(schema_env, schema_file):
 def test_secret_false_helper():
     schema = _build_schema({"vars": {"K": {"secret": False}}})
     assert "K" in schema.nonsecret_keys
+
+
+def test_type_error_message_does_not_leak_value():
+    """V003 messages must redact the offending value (it may be a secret)."""
+    secret = "ghp_0123456789abcdefABCDEF0123456789abcd0000"
+    schema = _build_schema({"vars": {"API_KEY": {"type": "int"}}})
+    findings = validate(parse_text(f"API_KEY={secret}"), schema)
+    v003 = [f for f in findings if f.code == "V003"]
+    assert v003
+    for f in v003:
+        assert secret not in f.message
+        assert "redacted" in f.message
+
+
+def test_enum_error_message_does_not_leak_value():
+    secret = "ghp_0123456789abcdefABCDEF0123456789abcd0000"
+    schema = _build_schema({"vars": {"TOKEN": {"allowed": ["a", "b"]}}})
+    findings = validate(parse_text(f"TOKEN={secret}"), schema)
+    v004 = [f for f in findings if f.code == "V004"]
+    assert v004
+    for f in v004:
+        assert secret not in f.message
+
+
+def test_schema_root_must_be_table(tmp_path):
+    p = tmp_path / ".env.schema.json"
+    p.write_text("[1, 2, 3]")
+    with pytest.raises(ValueError):
+        load_schema(p)

@@ -11,6 +11,16 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Union
 
+# Default maximum size (bytes) for a file we are willing to read into memory.
+# A real .env is kilobytes; this generous cap (8 MiB) prevents a
+# memory/CPU denial-of-service from an accidental or hostile huge file while
+# never tripping on legitimate input.
+MAX_FILE_BYTES = 8 * 1024 * 1024
+
+
+class EnvFileTooLargeError(ValueError):
+    """Raised when an env/schema file exceeds the allowed size limit."""
+
 
 @dataclass
 class EnvEntry:
@@ -120,7 +130,32 @@ def parse_text(text: str, path: str = "<string>") -> ParsedEnv:
     return ParsedEnv(path=path, entries=entries, malformed=malformed)
 
 
-def parse_file(path: Union[str, Path]) -> ParsedEnv:
+def read_text_capped(
+    path: Union[str, Path], *, max_bytes: int = MAX_FILE_BYTES
+) -> str:
+    """Read a text file with a size cap and lenient decoding.
+
+    Raises :class:`EnvFileTooLargeError` if the file exceeds ``max_bytes``.
+    Decodes as UTF-8 with ``errors="replace"`` so legacy-encoded files (e.g.
+    Latin-1) are inspected safely instead of crashing — the content is only
+    read for analysis, never executed or written back verbatim.
+    """
     p = Path(path)
-    text = p.read_text(encoding="utf-8")
+    size = p.stat().st_size
+    if size > max_bytes:
+        raise EnvFileTooLargeError(
+            f"{p} is {size} bytes, exceeding the {max_bytes}-byte limit"
+        )
+    data = p.read_bytes()
+    # Guard against the rare case where the file grows between stat() and read.
+    if len(data) > max_bytes:
+        raise EnvFileTooLargeError(
+            f"{p} is larger than the {max_bytes}-byte limit"
+        )
+    return data.decode("utf-8", errors="replace")
+
+
+def parse_file(path: Union[str, Path], *, max_bytes: int = MAX_FILE_BYTES) -> ParsedEnv:
+    p = Path(path)
+    text = read_text_capped(p, max_bytes=max_bytes)
     return parse_text(text, path=str(p))

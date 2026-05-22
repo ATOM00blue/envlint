@@ -67,6 +67,26 @@ _PLACEHOLDER = re.compile(
 ENTROPY_THRESHOLD = 4.0
 ENTROPY_MIN_LENGTH = 20
 
+# Redaction defaults. We never echo a full value that might be a secret; we show
+# only its length and a tiny, fixed-size prefix for debuggability.
+_REDACT_PREVIEW = 4
+_REDACT_SHOW_THRESHOLD = 8  # values at/under this are fully masked (a short
+#                            value's prefix can be most of the secret)
+
+
+def redact(value: str, *, preview: int = _REDACT_PREVIEW) -> str:
+    """Return a safe, non-leaking representation of a possibly-secret value.
+
+    Never returns more than ``preview`` leading characters of the original. The
+    result is meant for human-readable diagnostics, not round-tripping.
+    """
+    if value == "":
+        return "<empty>"
+    n = len(value)
+    if n <= _REDACT_SHOW_THRESHOLD:
+        return f"<redacted {n}-char value>"
+    return f"{value[:preview]}…<redacted {n}-char value>"
+
 
 def shannon_entropy(s: str) -> float:
     """Shannon entropy of a string in bits per character."""
@@ -99,6 +119,19 @@ def match_known_patterns(value: str) -> Optional[SecretPattern]:
 def is_secret_key(key: str) -> bool:
     """Whether a key *name* implies a secret value."""
     return bool(_SECRET_KEY_HINTS.search(key))
+
+
+def looks_high_entropy(value: str, *, threshold: float = ENTROPY_THRESHOLD) -> bool:
+    """Heuristic: a long, space-free, non-placeholder, high-entropy value.
+
+    Mirrors the entropy branch of :func:`scan` so callers (e.g. the example
+    generator) can make the *same* redaction decision the scanner would.
+    """
+    if _looks_like_placeholder(value):
+        return False
+    if len(value) < ENTROPY_MIN_LENGTH or " " in value:
+        return False
+    return shannon_entropy(value) >= threshold
 
 
 def scan(

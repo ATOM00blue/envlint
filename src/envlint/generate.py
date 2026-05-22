@@ -4,24 +4,38 @@ from __future__ import annotations
 
 from .parser import ParsedEnv
 from .schema import Schema
-from .secrets import is_secret_key, match_known_patterns
+from .secrets import is_secret_key, looks_high_entropy, match_known_patterns
+
+# Below this length a value is too short to plausibly be a meaningful secret
+# *and* too short for the entropy heuristic; safe to keep as a hint if it is
+# otherwise innocuous (not a known pattern, not a secret-looking key name).
+_SAFE_HINT_MAX_LEN = 24
 
 
 def _placeholder_for(key: str, value: str) -> str:
-    """Produce a safe placeholder for a value, redacting likely secrets."""
+    """Produce a safe placeholder for a value, redacting likely secrets.
+
+    A value is redacted to a generic placeholder when *any* of these hold:
+    the key name looks secret, the value matches a known provider pattern, or
+    the value looks high-entropy (same heuristic the scanner uses). This keeps
+    the generated ``.env.example`` commit-safe even for short opaque tokens.
+    """
     if value == "":
         return ""
+    redacted = f"your-{key.lower().replace('_', '-')}-here"
     if is_secret_key(key) or match_known_patterns(value) is not None:
-        return f"your-{key.lower().replace('_', '-')}-here"
+        return redacted
+    if looks_high_entropy(value):
+        return redacted
     # Numeric-looking values are safe to keep as a hint.
     if value.isdigit():
         return value
     if value.lower() in {"true", "false", "yes", "no", "on", "off"}:
         return value
-    # Keep short, non-secret hints; redact long opaque strings.
-    if len(value) <= 24 and " " not in value:
+    # Keep short, non-secret, low-entropy hints; redact anything longer/opaque.
+    if len(value) <= _SAFE_HINT_MAX_LEN and " " not in value:
         return value
-    return f"your-{key.lower().replace('_', '-')}-here"
+    return redacted
 
 
 def generate_example(env: ParsedEnv, *, schema: Schema | None = None) -> str:

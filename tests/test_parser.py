@@ -1,4 +1,14 @@
-from envlint.parser import EnvEntry, parse_file, parse_line, parse_text
+import pytest
+
+from envlint.parser import (
+    MAX_FILE_BYTES,
+    EnvEntry,
+    EnvFileTooLargeError,
+    parse_file,
+    parse_line,
+    parse_text,
+    read_text_capped,
+)
 
 
 def test_parse_basic_assignment():
@@ -89,3 +99,32 @@ def test_parse_line_returns_entry_for_valid():
 def test_empty_value():
     env = parse_text("EMPTY=")
     assert env.entries[0].is_empty_value is True
+
+
+def test_non_utf8_file_does_not_crash(tmp_path):
+    """A legacy-encoded (Latin-1) .env must be parsed, not crash."""
+    p = tmp_path / "latin1.env"
+    p.write_bytes(b"KEY=caf\xe9_value\n")
+    env = parse_file(p)  # would raise UnicodeDecodeError before the fix
+    assert env.entries[0].key == "KEY"
+    # The undecodable byte is replaced, not lost; the line still parses.
+    assert env.entries[0].value.startswith("caf")
+
+
+def test_file_over_size_limit_rejected(tmp_path):
+    p = tmp_path / "big.env"
+    with open(p, "wb") as fh:
+        fh.write(b"A=1\n")
+        fh.seek(MAX_FILE_BYTES + 1024)
+        fh.write(b"B=2\n")
+    with pytest.raises(EnvFileTooLargeError):
+        parse_file(p)
+
+
+def test_read_text_capped_respects_custom_limit(tmp_path):
+    p = tmp_path / "small.env"
+    p.write_text("KEY=value\n", encoding="utf-8")
+    with pytest.raises(EnvFileTooLargeError):
+        read_text_capped(p, max_bytes=3)
+    # Under the default limit it reads fine.
+    assert "KEY=value" in read_text_capped(p)
